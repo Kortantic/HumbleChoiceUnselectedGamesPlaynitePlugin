@@ -1,0 +1,8 @@
+AddonId: 64ca9178-daac-44e7-a80b-0a33efaa9e6e
+Packages:
+  - Version: 1.0.0
+    ReleaseDate: 2024-07-26
+    PackageUrl: https://github.com/SecurityJosh/HumbleChoiceUnselectedGamesPlaynitePlugin/releases/download/V1/HumbleChoice_64ca9178-daac-44e7-a80b-0a33efaa9e6e_1_0.pext
+    RequiredApiVersion: 6.0.0
+    Changelog:
+     - Initial release
