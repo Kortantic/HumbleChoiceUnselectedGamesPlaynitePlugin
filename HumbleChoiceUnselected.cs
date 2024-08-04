@@ -14,10 +14,9 @@ namespace HumbleChoiceUnselected
 {
     public class HumbleChoiceUnselected : LibraryPlugin
     {
-        string ExtractProductDataFromHtml(string html)
-        {
-            var needle = "<script id=\"webpack-monthly-product-data\" type=\"application/json\">";
-
+        const string baseUrl = "https://www.humblebundle.com/membership/";
+        string ExtractProductDataFromHtml(string html, string needle = "<script id=\"webpack-monthly-product-data\" type=\"application/json\">")
+        { 
             var needleExists = html.IndexOf(needle) > -1;
 
             if (!needleExists)
@@ -86,29 +85,18 @@ namespace HumbleChoiceUnselected
             };
         }
 
-        private IEnumerable<GameMetadata> ProcessProduct(JsonElement product, JsonElement title, string baseUrl, WebClient client)
+        private IEnumerable<GameMetadata> ProcessProduct(string rawProductData)
         {
-            logger.Info($"Found {title}");
+            var productData = JsonDocument.Parse(rawProductData);
 
-            if (!product.TryGetProperty("gamekey", out var _))
+            var title = productData.RootElement.GetProperty("contentChoiceOptions").GetProperty("title").ToString();
+            var productUrl = baseUrl + productData.RootElement.GetProperty("contentChoiceOptions").GetProperty("productUrlPath").ToString();
+
+            if (!productData.RootElement.GetProperty("contentChoiceOptions").TryGetProperty("gamekey", out var _))
             {
                 logger.Info($"No gamekey found so skipping.");
                 return new List<GameMetadata>();
             }
-
-            var urlPath = product.GetProperty("productUrlPath");
-
-            var productUrl = baseUrl + urlPath;
-
-            var rawProductData = ExtractProductDataFromHtml(client.DownloadString(productUrl));
-
-            if (rawProductData == null)
-            {
-                logger.Error("Could not extract JSON from " + rawProductData);
-                return new List<GameMetadata>();
-            }
-
-            var productData = JsonDocument.Parse(rawProductData);
 
             if (!ChoicesAvailable(productData))
             {
@@ -161,15 +149,14 @@ namespace HumbleChoiceUnselected
                 {
                     Name = gameName,
                     GameId = Id.ToString() + "/" + gameName,
-                    Source = new MetadataNameProperty(title.ToString()),
+                    Source = new MetadataNameProperty(title),
                     Links = new List<Link> { new Link("Redemption Page", productUrl + "/" + x.Name) }
                 };
             });
         }
 
         public override IEnumerable<GameMetadata> GetGames(LibraryGetGamesArgs args)
-        {
-            const string baseUrl = "https://www.humblebundle.com/membership/";
+        { 
             var gameList = new List<GameMetadata>();
 
             if (settings.Settings.Cookie == String.Empty || settings.Settings.Cookie == null)
@@ -189,6 +176,26 @@ namespace HumbleChoiceUnselected
             var client = new WebClient();
             client.Headers[HttpRequestHeader.Cookie] = "_simpleauth_sess=" + decryptedCookie;
             client.Headers[HttpRequestHeader.UserAgent] = "PlaynitePlugin/HumbleChoiceUnselectedGames/1.0";
+
+            try
+            {
+                var currentMonthData = client.DownloadString("https://www.humblebundle.com/membership/home");
+                var currentMonthDataJson = ExtractProductDataFromHtml(currentMonthData, "<script id=\"webpack-subscriber-hub-data\" type=\"application/json\">");
+
+                if (currentMonthDataJson == null)
+                {
+                    logger.Error("Couldn't extract JSON data for current month");
+                }
+                else
+                {
+                    gameList.AddRange(ProcessProduct(currentMonthDataJson));
+                }
+            }
+            catch (Exception e)
+            {
+                logger.Error("There was an error when fetching the data for the current month");
+                logger.Error(e.ToString());
+            }
 
             var cursor = "";
 
@@ -219,7 +226,7 @@ namespace HumbleChoiceUnselected
                     foreach (var product in jsonData.RootElement.GetProperty("products").EnumerateArray())
                     {
 
-                        if (!product.TryGetProperty("title", out var title))
+                        if (!product.TryGetProperty("title", out var title ))
                         {
                             logger.Info($"No title found so bundle appears to be an old Humble Monthly bundle, stopping here.");
                             return gameList;
@@ -227,7 +234,28 @@ namespace HumbleChoiceUnselected
 
                         try
                         {
-                            gameList.AddRange(ProcessProduct(product, title, baseUrl, client));
+                            logger.Info($"Found {title}");
+
+                            if (!product.TryGetProperty("gamekey", out var _))
+                            {
+                                logger.Info($"No gamekey found so skipping.");
+                                continue;
+                            }
+
+                            var urlPath = product.GetProperty("productUrlPath");
+
+                            var productUrl = baseUrl + urlPath;
+
+                            var rawProductData = ExtractProductDataFromHtml(client.DownloadString(productUrl));
+
+                            if (rawProductData == null)
+                            {
+                                logger.Error("Could not extract JSON from " + rawProductData);
+                                continue;
+                            }
+
+
+                            gameList.AddRange(ProcessProduct(rawProductData));
                         }
                         catch (Exception ex)
                         {
