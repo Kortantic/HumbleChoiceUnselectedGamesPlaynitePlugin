@@ -2,7 +2,7 @@ AddonId: 64ca9178-daac-44e7-a80b-0a33efaa9e6e
 Packages:
   - Version: 1.0.2
     ReleaseDate: 2024-09-27
-    PackageUrl: https://github.com/SecurityJosh/HumbleChoiceUnselectedGamesPlaynitePlugin/releases/download/1.0.2/HumbleChoice_64ca9178-daac-44e7-a80b-0a33efaa9e6e_1_0_2.pext
+    PackageUrl: https://github.com/SecurityJosh/HumbleChoiceUnselectedGamesPlaynitePlugin/releases/download/1.0.2/64ca9178-daac-44e7-a80b-0a33efaa9e6e_1_0_2.pext
     RequiredApiVersion: 6.0.0
     Changelog:
      - Fixed theoretical issue where if a game is available to be selected from multiple choice bundles it would only show up once.
