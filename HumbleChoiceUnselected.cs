@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Reflection;
 using System.Text.Json;
 using System.Windows.Controls;
 
@@ -148,11 +149,20 @@ namespace HumbleChoiceUnselected
                 return new GameMetadata()
                 {
                     Name = gameName,
-                    GameId = Id.ToString() + "/" + gameName,
+                    GameId = Id.ToString() + "/" + gameName + "/" + title,
                     Source = new MetadataNameProperty(title),
                     Links = new List<Link> { new Link("Redemption Page", productUrl + "/" + x.Name) }
                 };
             });
+        }
+
+        private void RemoveExistingGames()
+        {
+            using (PlayniteApi.Database.BufferedUpdate())
+            {
+                logger.Info("Removing existing game entries created by the plugin");
+                PlayniteApi.Database.Games.Where(x => x.GameId.ToString().StartsWith(Id.ToString() + "/")).ForEach(x => PlayniteApi.Database.Games.Remove(x.Id));
+            }
         }
 
         public override IEnumerable<GameMetadata> GetGames(LibraryGetGamesArgs args)
@@ -175,7 +185,8 @@ namespace HumbleChoiceUnselected
 
             var client = new WebClient();
             client.Headers[HttpRequestHeader.Cookie] = "_simpleauth_sess=" + decryptedCookie;
-            client.Headers[HttpRequestHeader.UserAgent] = "PlaynitePlugin/HumbleChoiceUnselectedGames/1.0";
+            logger.Info("PlaynitePlugin/HumbleChoiceUnselectedGames/" + Assembly.GetExecutingAssembly().GetName().Version);
+            client.Headers[HttpRequestHeader.UserAgent] = "PlaynitePlugin/HumbleChoiceUnselectedGames/" + Assembly.GetCallingAssembly().GetName().Version;
 
             try
             {
@@ -229,6 +240,7 @@ namespace HumbleChoiceUnselected
                         if (!product.TryGetProperty("title", out var title ))
                         {
                             logger.Info($"No title found so bundle appears to be an old Humble Monthly bundle, stopping here.");
+                            RemoveExistingGames();
                             return gameList;
                         }
 
@@ -282,10 +294,7 @@ namespace HumbleChoiceUnselected
                 }
             }
 
-            using (PlayniteApi.Database.BufferedUpdate())
-            {
-                PlayniteApi.Database.Games.Where(x => x.GameId.ToString().StartsWith(Id.ToString() + "/")).ForEach(x => PlayniteApi.Database.Games.Remove(x.Id));
-            }
+            RemoveExistingGames();
 
             return gameList;  
         }
