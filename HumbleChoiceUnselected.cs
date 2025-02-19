@@ -4,6 +4,7 @@ using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Reflection;
@@ -17,7 +18,7 @@ namespace HumbleChoiceUnselected
     {
         const string baseUrl = "https://www.humblebundle.com/membership/";
         string ExtractProductDataFromHtml(string html, string needle = "<script id=\"webpack-monthly-product-data\" type=\"application/json\">")
-        { 
+        {
             var needleExists = html.IndexOf(needle) > -1;
 
             if (!needleExists)
@@ -77,6 +78,8 @@ namespace HumbleChoiceUnselected
         // Implementing Client adds ability to open it via special menu in playnite.
         public override LibraryClient Client { get; } = new HumbleChoiceUnselectedClient();
 
+        public override string LibraryIcon => Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), @"icon.png");
+
         public HumbleChoiceUnselected(IPlayniteAPI api) : base(api)
         {
             settings = new HumbleChoiceUnselectedSettingsViewModel(this);
@@ -132,8 +135,8 @@ namespace HumbleChoiceUnselected
             }
 
             logger.Info($"Found {allTitles.Count()} games in {title}");
-            
-            if(allTitles.Count() == 0)
+
+            if (allTitles.Count() == 0)
             {
                 logger.Error("allTitles.Count() was zero, either there are no games in the product (unlikely) or we aren't looking at the correct JSON key");
             }
@@ -149,24 +152,58 @@ namespace HumbleChoiceUnselected
                 return new GameMetadata()
                 {
                     Name = gameName,
-                    GameId = Id.ToString() + "/" + gameName + "/" + title,
+                    GameId = MakeID(gameName, title),
                     Source = new MetadataNameProperty(title),
                     Links = new List<Link> { new Link("Redemption Page", productUrl + "/" + x.Name) }
                 };
             });
         }
 
-        private void RemoveExistingGames()
+        private void RemoveClaimedAndExpiredGames(List<GameMetadata> fromHumble)
         {
+            logger.Info($"Removing games that have been claimed or whose keys have expired");
+            var library = PlayniteApi.Database.Games;
+            var HcUnselectedLibrary = library.Where(x => x.GameId.StartsWith(Id.ToString() + "/"));
+
+            var idsFromHumble = new HashSet<string>(fromHumble.Select(g => g.GameId), StringComparer.OrdinalIgnoreCase);
+            var toRemove = HcUnselectedLibrary.Where(g => !idsFromHumble.Contains(g.GameId)).ToList();
             using (PlayniteApi.Database.BufferedUpdate())
             {
-                logger.Info("Removing existing game entries created by the plugin");
-                PlayniteApi.Database.Games.Where(x => x.GameId.ToString().StartsWith(Id.ToString() + "/")).ForEach(x => PlayniteApi.Database.Games.Remove(x.Id));
+                toRemove.ForEach(g => PlayniteApi.Database.Games.Remove(g.Id));
+            }
+
+            if (toRemove.Count > 0)
+            {
+                var notification = new NotificationMessage(
+                        "Games Claimed or Expired",
+                        $"The following Humble Choice games were either claimed or their keys expired: {String.Join(", ", toRemove.Select(g => g.Name))}",
+                        NotificationType.Info
+                        );
+                PlayniteApi.Notifications.Add(notification);
+            }
+
+            var idsInLibrary = new HashSet<string>(HcUnselectedLibrary.Select(g => g.GameId));
+            var addedIds = idsFromHumble.Where(g => !idsInLibrary.Contains(g));
+            var addedGames = fromHumble.Where(g => addedIds.Contains(g.GameId)).ToList();
+            if (addedGames.Count > 0 && addedGames.Count < idsFromHumble.Count)
+            {
+                var notification = new NotificationMessage(
+                        "Humble Choice Games Added",
+                        $"The following games are now available in Humble Choice: {String.Join(", ", addedGames.Select(g => g.Name))}",
+                        NotificationType.Info
+                        );
+                PlayniteApi.Notifications.Add(notification);
             }
         }
 
+
+        private string MakeID(string name, string source)
+        {
+            return Id.ToString() + "/" + name + "/" + source;
+        }
+
         public override IEnumerable<GameMetadata> GetGames(LibraryGetGamesArgs args)
-        { 
+        {
             var gameList = new List<GameMetadata>();
 
             if (settings.Settings.Cookie == String.Empty || settings.Settings.Cookie == null)
@@ -177,7 +214,7 @@ namespace HumbleChoiceUnselected
 
             var decryptedCookie = Dpapi.Unprotect(settings.Settings.Cookie, Id.ToString(), System.Security.Cryptography.DataProtectionScope.CurrentUser);
 
-            if(decryptedCookie == null)
+            if (decryptedCookie == null)
             {
                 logger.Error("Error decrypting cookie");
                 throw new Exception("Error decrypting cookie");
@@ -237,10 +274,10 @@ namespace HumbleChoiceUnselected
                     foreach (var product in jsonData.RootElement.GetProperty("products").EnumerateArray())
                     {
 
-                        if (!product.TryGetProperty("title", out var title ))
+                        if (!product.TryGetProperty("title", out var title))
                         {
                             logger.Info($"No title found so bundle appears to be an old Humble Monthly bundle, stopping here.");
-                            RemoveExistingGames();
+                            RemoveClaimedAndExpiredGames(gameList);
                             return gameList;
                         }
 
@@ -278,15 +315,16 @@ namespace HumbleChoiceUnselected
                         }
                     }
                 }
-                catch(WebException webException)
+                catch (WebException webException)
                 {
-                    var httpResponse = (HttpWebResponse) webException.Response;
-                    if(httpResponse.StatusCode == HttpStatusCode.NotFound)
+                    var httpResponse = (HttpWebResponse)webException.Response;
+                    if (httpResponse.StatusCode == HttpStatusCode.NotFound)
                     {
                         logger.Info($"Request to {httpResponse.ResponseUri} returned 404 suggesting no further purchases to download.");
                         cursor = null;
                     }
-                }catch(Exception ex)
+                }
+                catch (Exception ex)
                 {
                     logger.Error("Caught a generic exception");
                     logger.Error(ex.ToString());
@@ -294,9 +332,9 @@ namespace HumbleChoiceUnselected
                 }
             }
 
-            RemoveExistingGames();
+            RemoveClaimedAndExpiredGames(gameList);
 
-            return gameList;  
+            return gameList;
         }
 
         public override ISettings GetSettings(bool firstRunSettings)
