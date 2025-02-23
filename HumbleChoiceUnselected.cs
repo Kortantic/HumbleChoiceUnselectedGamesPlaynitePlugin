@@ -8,9 +8,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading.Tasks;
 using System.Windows.Controls;
 
 
@@ -18,6 +20,7 @@ namespace HumbleChoiceUnselected
 {
     public class HumbleChoiceUnselected : LibraryPlugin
     {
+        private string UserAgent { get; set; }
         const string baseUrl = "https://www.humblebundle.com";
         const string choiceUrl = "https://www.humblebundle.com/membership";
         const string apiUrl = "https://www.humblebundle.com/api/v1";
@@ -90,6 +93,7 @@ namespace HumbleChoiceUnselected
             {
                 HasSettings = true
             };
+            UserAgent = $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36 Playnite/{api.ApplicationInfo.ApplicationVersion.ToString(2)}";
         }
 
         private IEnumerable<GameMetadata> ProcessProduct(string rawProductData)
@@ -208,26 +212,34 @@ namespace HumbleChoiceUnselected
 
         public override IEnumerable<GameMetadata> GetGames(LibraryGetGamesArgs args)
         {
-            WebClient client = GetHumbleClient();
-            var games = GetChoiceGames(client).ToList();
-            if (settings.Settings.ImportEntitlements)
+            HttpClient client = GetHumbleClient();
+            try
             {
-                games.AddRange(GetEntitlements(client));
+                var games = GetChoiceGames(client).GetAwaiter().GetResult().ToList();
+                if (settings.Settings.ImportEntitlements)
+                {
+                    var entitlements = GetEntitlements(client).GetAwaiter().GetResult().ToList();
+                    games.AddRange(entitlements);
+                }
+                return games;
             }
-            return games;
+            catch (AggregateException ex)
+            {
+                throw ex.InnerException ?? ex;
+            }
         }
 
-        private IEnumerable<GameMetadata> GetChoiceGames(WebClient client)
+        private async Task<IEnumerable<GameMetadata>> GetChoiceGames(HttpClient client)
         {
             var gameList = new List<GameMetadata>();
             // TODO: Remove this, this is here to speed up testing of entitlements
-            var library = PlayniteApi.Database.Games;
-            var HcUnselectedLibrary = library.Where(x => x.GameId.StartsWith($"{Id.ToString()}/"));
-            return HcUnselectedLibrary.Select(g => new GameMetadata() { Name = g.Name, GameId = g.GameId, Source = new MetadataNameProperty(g.Source.Name), Links = g.Links.ToList() });
+            // var library = PlayniteApi.Database.Games;
+            // var HcUnselectedLibrary = library.Where(x => x.GameId.StartsWith($"{Id.ToString()}/"));
+            // return HcUnselectedLibrary.Select(g => new GameMetadata() { Name = g.Name, GameId = g.GameId, Source = new MetadataNameProperty(g.Source.Name), Links = g.Links.ToList() });
 
             try
             {
-                var currentMonthData = client.DownloadString($"{choiceUrl}/home");
+                var currentMonthData = await client.GetStringAsync($"{choiceUrl}/home");
                 var currentMonthDataJson = ExtractProductDataFromHtml(currentMonthData, "<script id=\"webpack-subscriber-hub-data\" type=\"application/json\">");
 
                 if (currentMonthDataJson == null)
@@ -253,7 +265,7 @@ namespace HumbleChoiceUnselected
                 {
                     var requestUrl = $"{apiUrl}/subscriptions/humble_monthly/subscription_products_with_gamekeys/{cursor}";
 
-                    JsonDocument jsonData = AuthenticatedApiRequest(client, requestUrl);
+                    JsonDocument jsonData = await AuthenticatedApiRequest(client, requestUrl);
 
                     cursor = jsonData.RootElement.TryGetProperty("cursor", out var _) ? jsonData.RootElement.GetProperty("cursor").GetString() : null;
 
@@ -281,7 +293,8 @@ namespace HumbleChoiceUnselected
 
                             var productUrl = $"{choiceUrl}/{urlPath}";
 
-                            var rawProductData = ExtractProductDataFromHtml(client.DownloadString(productUrl));
+                            var page = await client.GetStringAsync(productUrl);
+                            var rawProductData = ExtractProductDataFromHtml(page);
 
                             if (rawProductData == null)
                             {
@@ -323,11 +336,12 @@ namespace HumbleChoiceUnselected
             return gameList;
         }
 
-        private static JsonDocument AuthenticatedApiRequest(WebClient client, string apiRequestUrl)
+
+        private static async Task<JsonDocument> AuthenticatedApiRequest(HttpClient client, string apiRequestUrl)
         {
             logger.Info($"Making request to: {apiRequestUrl}");
 
-            var data = client.DownloadString(apiRequestUrl);
+            var data = await client.GetStringAsync(apiRequestUrl);
 
             if (data.Contains("Humble Bundle - Log In"))
             {
@@ -343,52 +357,58 @@ namespace HumbleChoiceUnselected
             return jsonData;
         }
 
-        private WebClient GetHumbleClient()
+
+        private HttpClient GetHumbleClient()
         {
-            if (settings.Settings.Cookie == String.Empty || settings.Settings.Cookie == null)
+            var handler = new HttpClientHandler
             {
-                logger.Error("Cookie value not set");
-                throw new Exception("Cookie value not set");
-            }
+                UseCookies = true, // Enable automatic cookie handling
+                CookieContainer = new CookieContainer() // Store cookies
+            };
 
+            var client = new HttpClient(handler);
+            Uri baseUri = new Uri("https://www.humblebundle.com");
             var decryptedCookie = Dpapi.Unprotect(settings.Settings.Cookie, Id.ToString(), System.Security.Cryptography.DataProtectionScope.CurrentUser);
+            handler.CookieContainer.Add(baseUri, new Cookie("_simpleauth_sess", decryptedCookie));
+            string userAgent = $"PlaynitePlugin/1.0.0.2 HumbleChoiceUnselectedGames";
+            logger.Info(userAgent);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
 
-            if (decryptedCookie == null)
-            {
-                logger.Error("Error decrypting cookie");
-                throw new Exception("Error decrypting cookie");
-            }
-
-            var client = new WebClient();
-            client.Headers[HttpRequestHeader.Cookie] = $"_simpleauth_sess={decryptedCookie}";
-            logger.Info($"PlaynitePlugin/HumbleChoiceUnselectedGames/{Assembly.GetExecutingAssembly().GetName().Version}");
-            client.Headers[HttpRequestHeader.UserAgent] = $"PlaynitePlugin/HumbleChoiceUnselectedGames/{Assembly.GetCallingAssembly().GetName().Version}";
             return client;
         }
 
-        private IEnumerable<GameMetadata> GetEntitlements(WebClient client)
+
+        private async Task<IEnumerable<GameMetadata>> GetEntitlements(HttpClient client)
         {
             try
             {
                 var requestUrl = $"{baseUrl}/home/keys";
-                var entitlementsPageHtml = client.DownloadString(requestUrl);
+                var entitlementsPageHtml = await client.GetStringAsync(requestUrl);
                 var userHomeJsonData = ExtractProductDataFromHtml(entitlementsPageHtml, "<script id=\"user-home-json-data\" type=\"application/json\">");
                 var userHomeObject = JsonNode.Parse(userHomeJsonData).AsObject();
+
                 if (userHomeObject.TryGetPropertyValue("gamekeys", out var keysNode))
                 {
-                    var keys = keysNode.AsArray().Select(k => k.GetValue<string>());
-                    while (keys.Any())
+                    var keys = keysNode.AsArray().Select(k => k.GetValue<string>()).ToList();
+                    var chunkSize = 40; // number that Humble's website uses
+                    var chunkTasks = new List<Task<string>>();
+                    for (int i = 0; i < keys.Count; i += chunkSize)
                     {
-                        var chunk = keys.Take(40);
-
-                        logger.Info("Processing chunk:");
-                        foreach (var key in chunk)
-                        {
-                            Debug.WriteLine(key);
-                        }
-                        keys = keys.Skip(40);
+                        var chunk = keys.Skip(i).Take(chunkSize).ToList();
+                        chunkTasks.Add(RequestKeyChunkInfo(client, chunk));
                     }
-                    logger.Info("Finished processing keys");
+                    var responses = await Task.WhenAll(chunkTasks);
+                    logger.Info("Finished retreiving keys");
+
+                    var combinedJson = MergeResponses(responses);
+
+                    // Log all unique properties found (for discovering properties that may not have shown up in my library)
+                    var mergedProperties = new JsonObject();
+                    CollectAllTpkProperties(combinedJson, mergedProperties);
+                    logger.Info("Merged Properties from all_tpks:");
+                    logger.Info(mergedProperties.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+                    return ConvertJsonToMetadata(combinedJson);
                 }
             }
             catch (Exception e)
@@ -396,17 +416,150 @@ namespace HumbleChoiceUnselected
                 logger.Error("Couldn't fetch entitlements");
                 logger.Error(e.ToString());
             }
+
             return new List<GameMetadata>();
         }
+
+
+        private JsonObject MergeResponses(IEnumerable<string> responses)
+        {
+            var combinedJson = new JsonObject();
+
+            foreach (var response in responses)
+            {
+                var parsedJson = JsonNode.Parse(response)?.AsObject();
+                if (parsedJson != null)
+                {
+                    foreach (var prop in parsedJson)
+                    {
+                        if (!combinedJson.ContainsKey(prop.Key))
+                        {
+                            combinedJson[prop.Key] = prop.Value?.DeepClone();
+                        }
+                    }
+                }
+            }
+
+            return combinedJson;
+        }
+
+
+        private void CollectAllTpkProperties(JsonObject rootObject, JsonObject mergedProperties)
+        {
+            foreach (var prop in rootObject)
+            {
+                if (prop.Value is JsonObject purchaseObject && purchaseObject.TryGetPropertyValue("tpkd_dict", out var tpkdNode))
+                {
+                    if (tpkdNode is JsonObject tpkdDict && tpkdDict.TryGetPropertyValue("all_tpks", out var allTpksNode) && allTpksNode is JsonArray allTpksArray)
+                    {
+                        foreach (var tpk in allTpksArray.OfType<JsonObject>())
+                        {
+                            foreach (var field in tpk)
+                            {
+                                if (!mergedProperties.ContainsKey(field.Key))
+                                {
+                                    mergedProperties[field.Key] = null;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
+        private List<GameMetadata> ConvertJsonToMetadata(JsonObject rootObject)
+        {
+            var metadata = new List<GameMetadata>();
+            foreach (var prop in rootObject)
+            {
+                if (prop.Value is JsonObject purchaseObject && purchaseObject.TryGetPropertyValue("tpkd_dict", out var tpkdNode))
+                {
+                    if (tpkdNode is JsonObject tpkdDict && tpkdDict.TryGetPropertyValue("all_tpks", out var allTpksNode) && allTpksNode is JsonArray allTpksArray)
+                    {
+                        foreach (var tpk in allTpksArray.OfType<JsonObject>())
+                        {
+                            if (!tpk.TryGetPropertyValue("redeemed_key_val", out _) && !tpk.TryGetPropertyValue("redeeming_giftemail", out _)) // TODO: I don't know if it's still redeemable if is_gift == true
+                            {
+                                tpk.TryGetPropertyValue("human_name", out var nameNode);
+                                var name = nameNode.ToString();
+                                tpk.TryGetPropertyValue("gamekey", out var gamekeyNode);
+                                var gameKey = gamekeyNode.ToString();
+                                if (tpk.TryGetPropertyValue("num_days_until_expired", out var numDaysUntilExpiredNode))
+                                {
+                                    var days = JsonSerializer.Deserialize<int>(numDaysUntilExpiredNode);
+                                    if (days <= 30 && days > -1) // TODO: Make this a setting
+                                    {
+                                        var notification = new NotificationMessage(
+                                                "Humble Key Expiring",
+                                                $"The key to {name} is expiring in {days} days",
+                                                NotificationType.Info,
+                                                () => StartUrl($"{baseUrl}/download?key={gameKey}")
+                                                );
+                                        PlayniteApi.Notifications.Add(notification);
+                                    }
+                                }
+                                metadata.Add(new GameMetadata()
+                                {
+                                    Name = name,
+                                    GameId = MakeID(name, "Humble Entitlements"),
+                                    Source = new MetadataNameProperty("Humble Entitlements"),
+                                    Links = new List<Link> { new Link("Redemption Page", $"{baseUrl}/download?key={gameKey}") }
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            return metadata;
+        }
+
+
+        private async Task<string> RequestKeyChunkInfo(HttpClient client, List<string> keys)
+        {
+            logger.Info($"Processing chunk with {keys.Count} keys");
+            var requestUrl = $"{apiUrl}/orders?all_tpkds=true&{string.Join("&", keys.Select(k => $"gamekeys={k}"))}";
+            return await client.GetStringAsync(requestUrl);
+        }
+
 
         public override ISettings GetSettings(bool firstRunSettings)
         {
             return settings;
         }
 
+
         public override UserControl GetSettingsView(bool firstRunSettings)
         {
             return new HumbleChoiceUnselectedSettingsView();
         }
+
+        public static Process StartUrl(string url)
+        {
+            logger.Debug($"Opening URL: {url}");
+            try
+            {
+                if (!Uri.IsWellFormedUriString(url, UriKind.Absolute))
+                {
+                    logger.Debug($"URL {url} is not well formatted. Start aborted.");
+                    return null;
+                }
+
+                return Process.Start(url);
+            }
+            catch (Exception e)
+            {
+                // There are some crash report with 0x80004005 error when opening standard URL.
+                logger.Error(e, "Failed to open URL.");
+                return Process.Start(CmdLineTools.Cmd, $"/C start {url}");
+            }
+        }
+    }
+
+    public static class CmdLineTools
+    {
+        public const string TaskKill = "taskkill";
+        public const string Cmd = "cmd";
+        public const string IPConfig = "ipconfig";
     }
 }
