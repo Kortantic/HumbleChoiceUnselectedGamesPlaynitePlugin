@@ -232,10 +232,6 @@ namespace HumbleChoiceUnselected
         private async Task<IEnumerable<GameMetadata>> GetChoiceGames(HttpClient client)
         {
             var gameList = new List<GameMetadata>();
-            // TODO: Remove this, this is here to speed up testing of entitlements
-            // var library = PlayniteApi.Database.Games;
-            // var HcUnselectedLibrary = library.Where(x => x.GameId.StartsWith($"{Id.ToString()}/"));
-            // return HcUnselectedLibrary.Select(g => new GameMetadata() { Name = g.Name, GameId = g.GameId, Source = new MetadataNameProperty(g.Source.Name), Links = g.Links.ToList() });
 
             try
             {
@@ -362,14 +358,13 @@ namespace HumbleChoiceUnselected
         {
             var handler = new HttpClientHandler
             {
-                UseCookies = true, // Enable automatic cookie handling
-                CookieContainer = new CookieContainer() // Store cookies
+                UseCookies = true,
+                CookieContainer = new CookieContainer()
             };
 
             var client = new HttpClient(handler);
-            Uri baseUri = new Uri("https://www.humblebundle.com");
             var decryptedCookie = Dpapi.Unprotect(settings.Settings.Cookie, Id.ToString(), System.Security.Cryptography.DataProtectionScope.CurrentUser);
-            handler.CookieContainer.Add(baseUri, new Cookie("_simpleauth_sess", decryptedCookie));
+            handler.CookieContainer.Add(new Uri(baseUrl), new Cookie("_simpleauth_sess", decryptedCookie));
             string userAgent = $"PlaynitePlugin/1.0.0.2 HumbleChoiceUnselectedGames";
             logger.Info(userAgent);
             client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
