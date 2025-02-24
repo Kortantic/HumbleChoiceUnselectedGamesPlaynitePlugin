@@ -42,8 +42,8 @@ Copy its value, not the whole cookie, and paste it into this extension's setting
 # TODO
 - [x] Import user's unredeemed non-choice keys
 - [x] Only delete redeemed or expired keys on sync
-- [] Allow user to authenticate with username and password instead of cookie
-- [] Use Choice's release date and user's purchase date as "Date Added"
-- [] Allow the user to configure when/if the library should warn of expiring keys
-- [] Change the folder the extension installs into to one with a human-readable name
-- [] Start using Steam `AppID`s instead of generating `GameId`s with the game's name to allow extensions to scrape Steam data
+- [ ] Allow user to authenticate with username and password instead of cookie
+- [ ] Use Choice's release date and user's purchase date as "Date Added"
+- [ ] Allow the user to configure when/if the library should warn of expiring keys
+- [ ] Change the folder the extension installs into to one with a human-readable name
+- [ ] Start using Steam `AppID`s instead of generating `GameId`s with the game's name to allow extensions to scrape Steam data
