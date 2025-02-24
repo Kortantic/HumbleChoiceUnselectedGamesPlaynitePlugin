@@ -184,7 +184,7 @@ namespace HumbleChoiceUnselected
             {
                 var notification = new NotificationMessage(
                         "Games Claimed or Expired",
-                        $"The following Humble Choice games were either claimed or their keys expired: {String.Join(", ", toRemove.Select(g => g.Name))}",
+                        $"The following Humble games were either claimed or their keys expired: {String.Join(", ", toRemove.Select(g => g.Name))}",
                         NotificationType.Info
                         );
                 PlayniteApi.Notifications.Add(notification);
@@ -197,7 +197,7 @@ namespace HumbleChoiceUnselected
             {
                 var notification = new NotificationMessage(
                         "Humble Choice Games Added",
-                        $"The following games are now available in Humble Choice: {String.Join(", ", addedGames.Select(g => g.Name))}",
+                        $"The following games are now available in Humble: {String.Join(", ", addedGames.Select(g => g.Name))}",
                         NotificationType.Info
                         );
                 PlayniteApi.Notifications.Add(notification);
@@ -221,6 +221,7 @@ namespace HumbleChoiceUnselected
                     var entitlements = GetEntitlements(client).GetAwaiter().GetResult().ToList();
                     games.AddRange(entitlements);
                 }
+                RemoveClaimedAndExpiredGames(games);
                 return games;
             }
             catch (AggregateException ex)
@@ -271,7 +272,6 @@ namespace HumbleChoiceUnselected
                         if (!product.TryGetProperty("title", out var title))
                         {
                             logger.Info($"No title found so bundle appears to be an old Humble Monthly bundle, stopping here.");
-                            RemoveClaimedAndExpiredGames(gameList);
                             return gameList;
                         }
 
@@ -326,8 +326,6 @@ namespace HumbleChoiceUnselected
                     cursor = null;
                 }
             }
-
-            RemoveClaimedAndExpiredGames(gameList);
 
             return gameList;
         }
@@ -474,7 +472,11 @@ namespace HumbleChoiceUnselected
                     {
                         foreach (var tpk in allTpksArray.OfType<JsonObject>())
                         {
-                            if (!tpk.TryGetPropertyValue("redeemed_key_val", out _) && !tpk.TryGetPropertyValue("redeeming_giftemail", out _)) // TODO: I don't know if it's still redeemable if is_gift == true
+                            tpk.TryGetPropertyValue("is_expired", out var isExpiredNode);
+                            var isExpired = JsonSerializer.Deserialize<bool>(isExpiredNode);
+                            if (!tpk.TryGetPropertyValue("redeemed_key_val", out _)
+                                    && !tpk.TryGetPropertyValue("redeeming_giftemail", out _)
+                                    && !isExpired) // TODO: I don't know if it's redeemable if is_gift == true
                             {
                                 tpk.TryGetPropertyValue("human_name", out var nameNode);
                                 var name = nameNode.ToString();
