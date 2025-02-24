@@ -30,17 +30,20 @@ Press *f-12* to open the developer's tools panel and go to the **Storage** tab o
 
 ![image](https://github.com/user-attachments/assets/5d4fea68-c194-4931-bcf9-771f84d52567)
 
-Open *Cookies* in the sidebar and click **https://humblebundle.com**
+Open **Cookies** in the sidebar and click **https://humblebundle.com**
 
 ![image](https://github.com/user-attachments/assets/35457472-e118-47aa-ab72-89baeeec0ab6)
 
-Then find the **_simpleauth_sess** cookie in the filter
+Find the **_simpleauth_sess** cookie using the filter, or by browsing the available cookie fields
 ![image](https://github.com/user-attachments/assets/17057b44-069e-4aac-8291-94bea365c4a5)
 
 Copy its value, not the whole cookie, and paste it into this extension's settings.
 
 # TODO
-[] Use Choice's release date and user's purchase date as "Date Added"
-[] Allow the user to configure when/if the library should warn of expiring keys
-[] Change the folder the extension installs into to one with a human-readable name
-[] Start using Steam `AppID`s instead of generating `GameId`s with the game's name to allow extensions to scrape Steam data
+- [x] Import user's unredeemed non-choice keys
+- [x] Only delete redeemed or expired keys on sync
+- [] Allow user to authenticate with username and password instead of cookie
+- [] Use Choice's release date and user's purchase date as "Date Added"
+- [] Allow the user to configure when/if the library should warn of expiring keys
+- [] Change the folder the extension installs into to one with a human-readable name
+- [] Start using Steam `AppID`s instead of generating `GameId`s with the game's name to allow extensions to scrape Steam data
